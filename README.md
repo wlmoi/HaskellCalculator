@@ -1,5 +1,5 @@
 # HaskellCalculator
-> A GTK-Based Calculator in Haskell
+> A GTK-Based Calculator in Haskell by William Anthony - 16523109
 
 ## Prerequisites
 Ensure Haskell is installed on your system. You can download it from [Haskell.org](https://www.haskell.org/downloads/) or manage it via your system's package manager.
