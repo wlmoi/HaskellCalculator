@@ -1,7 +1,8 @@
 import Graphics.UI.Gtk
 import Text.Read (readMaybe)
 import Data.Maybe (fromMaybe)
-import Data.List (isSuffixOf)
+import Data.Char (isDigit)
+import Data.List (foldl')
 
 main :: IO ()
 main = do
@@ -17,90 +18,85 @@ main = do
   boxPackStart vbox entry PackNatural 0
 
   -- Create a grid to organize the buttons
-  grid <- tableNew 4 4 True
+  grid <- tableNew 5 4 True
   boxPackStart vbox grid PackGrow 0
 
   -- Function to create a number button and its event handler
-  let createNumberButton num row col = do
-        button <- buttonNewWithLabel (show num)
-        tableAttachDefaults grid button col (col+1) row (row+1)
-        on button buttonActivated $ do
-          entryText <- entryGetText entry
-          entrySetText entry (entryText ++ show num)
-        return button
-
-  -- Create buttons for numbers 0 to 9
-  mapM_ (\(num, (row, col)) -> createNumberButton num row col) $
-    zip [1..9] [(0,0), (0,1), (0,2), (1,0), (1,1), (1,2), (2,0), (2,1), (2,2)]
-  createNumberButton 0 3 1
-
-  -- Function to create an operator button and its event handler
-  let createOperatorButton label row col = do
+  let createButton label handler row col = do
         button <- buttonNewWithLabel label
         tableAttachDefaults grid button col (col+1) row (row+1)
-        on button buttonActivated $ do
-          entryText <- entryGetText entry
-          -- Append the operator if the last character is not already an operator
-          if not (null entryText) && last entryText `elem` "+-*/"
-            then return () -- Do nothing if the last character is an operator
-            else entrySetText entry (entryText ++ label)
+        on button buttonActivated handler
         return button
 
+  -- Create number buttons
+  mapM_ (\(num, (row, col)) -> createButton (show num) (appendText entry (show num)) row col) $
+    zip [1..9] [(0,0), (0,1), (0,2), (1,0), (1,1), (1,2), (2,0), (2,1), (2,2)]
+  createButton "0" (appendText entry "0") 3 1
+
   -- Create operator buttons
-  createOperatorButton "+" 0 3
-  createOperatorButton "-" 1 3
-  createOperatorButton "*" 2 3
-  createOperatorButton "/" 3 3
+  createButton "+" (appendText entry "+") 0 3
+  createButton "-" (appendText entry "-") 1 3
+  createButton "*" (appendText entry "*") 2 3
+  createButton "/" (appendText entry "/") 3 3
+  createButton "." (appendText entry ".") 3 2
 
   -- Create a 'calculate' button
-  buttonCalc <- buttonNewWithLabel "="
-  tableAttachDefaults grid buttonCalc 3 4 3 4
-
-  -- Event handler for 'calculate' button
-  on buttonCalc buttonActivated $ do
-    entryText <- entryGetText entry
-    let result = fromMaybe 0 (calculate entryText) -- 'calculate' returns Maybe Double
-    entrySetText entry (show result)
+  buttonCalc <- createButton "=" calculateAndDisplay 3 4
 
   -- Create a 'clear' button
-  buttonClear <- buttonNewWithLabel "C"
-  tableAttachDefaults grid buttonClear 3 4 0 1
+  buttonClear <- createButton "C" (const (entrySetText entry "")) 0 4
 
-  -- Event handler for 'clear' button
-  on buttonClear buttonActivated $ entrySetText entry ""
+  -- Create a 'clear entry' button
+  buttonClearEntry <- createButton "CE" (const (entrySetText entry "")) 1 4
+
+  -- Create a 'backspace' button
+  buttonBackspace <- createButton "<-" (backspace entry) 2 4
+
+  -- Event handler for 'calculate' button
+  let calculateAndDisplay _ = do
+        entryText <- entryGetText entry
+        let result = fromMaybe (0 / 0) (calculate entryText) -- Handle errors with NaN
+        entrySetText entry (show result)
 
   -- Define the 'calculate' function
-  calculate :: String -> Maybe Double
-  calculate expression = evalRPN . toRPN $ expression
+  let calculate expression = evalRPN . toRPN $ expression
 
   -- Helper function to convert infix expression to RPN (Reverse Polish Notation)
-  toRPN :: String -> [String]
-  toRPN = reverse . foldl shuntingYard ([], [])
-    where
-      shuntingYard (out, ops) c
-        | c `elem` "0123456789" = ([c]:out, ops)
-        | c `elem` "+-*/" = (out, c:ops)
-        | c == ' ' = (out, ops)
-      shuntingYard (out, op:ops) _ = (op:out, ops)
+  let toRPN expr = reverse $ foldl' shuntingYard ([], []) expr where
+        shuntingYard (out, ops) c
+          | isDigit c || c == '.' = (c : head out : tail out, ops)
+          | c `elem` "+-*/" = (out, c:ops)
+          | otherwise = (out, ops)
+        shuntingYard (out, op:ops) _ = (op:out, ops)
 
   -- Helper function to evaluate RPN expression
-  evalRPN :: [String] -> Maybe Double
-  evalRPN = foldl evalStep (Just [])
-    where
-      evalStep Nothing _ = Nothing
-      evalStep (Just stack) token
-        | all (`elem` "0123456789") token = Just (read token : stack)
-        | token `elem` "+-*/" = case stack of
-            (x:y:ys) -> Just ((applyOp token y x) : ys)
-            _ -> Nothing
-        | otherwise = Nothing
-      applyOp "+" = (+)
-      applyOp "-" = (-)
-      applyOp "*" = (*)
-      applyOp "/" = (/)
-      applyOp _ = \_ _ -> 0
+  let evalRPN tokens = foldl' evalStep (Just []) tokens where
+        evalStep Nothing _ = Nothing
+        evalStep (Just stack) token
+          | all isDigit token || token == "." = Just (read token : stack)
+          | token `elem` ["+", "-", "*", "/"] = case stack of
+              (x:y:ys) -> Just (applyOp token y x : ys)
+              _ -> Nothing
+          | otherwise = Nothing
+        applyOp "+" = (+)
+        applyOp "-" = (-)
+        applyOp "*" = (*)
+        applyOp "/" = (/)
+        applyOp _ = \_ _ -> 0
 
-  set window [windowTitle := "Calculator", windowDefaultWidth := 200, windowDefaultHeight := 200]
+  -- Append text to the entry widget
+  let appendText entry text _ = do
+        entryText <- entryGetText entry
+        entrySetText entry (entryText ++ text)
+
+  -- Handle backspace functionality
+  let backspace entry _ = do
+        entryText <- entryGetText entry
+        if not (null entryText)
+          then entrySetText entry (init entryText)
+          else return ()
+
+  set window [windowTitle := "Calculator", windowDefaultWidth := 300, windowDefaultHeight := 400]
 
   widgetShowAll window -- Show the window and all its contents
   mainGUI             -- Start the main GUI loop
